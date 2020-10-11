@@ -8,9 +8,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generator, List, Union
 from zipfile import ZipFile
+import unicodedata
+import language_tool_python
+
 
 import requests
 
+
+###########################################################
+# Message classes
+###########################################################
 
 @dataclass
 class GrammalecteMessage:
@@ -45,14 +52,23 @@ class GrammalecteSpellingMessage(GrammalecteMessage):
         return super().__str__() + " " + self.message
 
     @staticmethod
-    def from_dict(line: int, grammalecte_dict: dict) -> "GrammalecteSpellingMessage":
+    def from_dict(line: int, grammalecte_dict: dict, as_dict=False
+        ) -> "GrammalecteSpellingMessage":
         """Instanciate GrammalecteSpellingMessage from Grammalecte result."""
-        return GrammalecteSpellingMessage(
-            line=line,
-            start=int(grammalecte_dict["nStart"]),
-            end=int(grammalecte_dict["nEnd"]),
-            word=grammalecte_dict["sValue"],
-        )
+        if as_dict:
+            return {
+                'line':line,
+                'start':int(grammalecte_dict["nStart"]),
+                'end':int(grammalecte_dict["nEnd"]),
+                'word':grammalecte_dict["sValue"],
+            }
+        else:
+            return GrammalecteSpellingMessage(
+                line=line,
+                start=int(grammalecte_dict["nStart"]),
+                end=int(grammalecte_dict["nEnd"]),
+                word=grammalecte_dict["sValue"],
+            )
 
 
 @dataclass
@@ -73,32 +89,98 @@ class GrammalecteGrammarMessage(GrammalecteMessage):
         return ret
 
     @staticmethod
-    def from_dict(line: int, grammalecte_dict: dict) -> "GrammalecteGrammarMessage":
+    def from_dict(line: int, grammalecte_dict: dict, as_dict=False
+        ) -> "GrammalecteGrammarMessage":
         """Instanciate GrammalecteGrammarMessage from Grammalecte result."""
-        return GrammalecteGrammarMessage(
-            line=line,
-            start=int(grammalecte_dict["nStart"]),
-            end=int(grammalecte_dict["nEnd"]),
-            url=grammalecte_dict["URL"],
-            color=grammalecte_dict["aColor"],
-            suggestions=grammalecte_dict["aSuggestions"],
-            message=grammalecte_dict["sMessage"],
-            rule=grammalecte_dict["sRuleId"],
-            type=grammalecte_dict["sType"],
-        )
+        if as_dict:
+            return {
+                'line':line,
+                'start':int(grammalecte_dict["nStart"]),
+                'end':int(grammalecte_dict["nEnd"]),
+                'url':grammalecte_dict["URL"],
+                'color':grammalecte_dict["aColor"],
+                'suggestions':grammalecte_dict["aSuggestions"],
+                'message':grammalecte_dict["sMessage"],
+                'rule':grammalecte_dict["sRuleId"],
+                'type':grammalecte_dict["sType"],
+            }
+        else:
+            return GrammalecteGrammarMessage(
+                line=line,
+                start=int(grammalecte_dict["nStart"]),
+                end=int(grammalecte_dict["nEnd"]),
+                url=grammalecte_dict["URL"],
+                color=grammalecte_dict["aColor"],
+                suggestions=grammalecte_dict["aSuggestions"],
+                message=grammalecte_dict["sMessage"],
+                rule=grammalecte_dict["sRuleId"],
+                type=grammalecte_dict["sType"],
+            )
 
 
-def grammalecte_text(text: str) -> Generator[GrammalecteMessage, None, None]:
+###########################################################
+# Main functions
+###########################################################
+
+def grammalecte_text(text: str, as_dict=False) -> Generator[GrammalecteMessage, None, None]:
     """Run grammalecte on a string, generate messages."""
+    
     with tempfile.TemporaryDirectory() as tmpdirname:
         tmpfile = Path(tmpdirname) / "file.txt"
         with open(tmpfile, "w", encoding="utf-8") as f:
             f.write(text)
-        yield from grammalecte_file(tmpfile)
+        yield from grammalecte_file(tmpfile, as_dict=as_dict)
 
+
+def correct(text: str) -> str:
+    
+    # get correction messages and sort them in reverse order
+    messages = list(grammalecte_text(text, as_dict=True))
+    messages = sorted(messages, key = lambda i: (i['line'], i['start']), reverse=True)
+    
+    # split text in lines and characters
+    lines = text.splitlines()
+    lines = [list(x) for x in lines]
+    
+    # apply corrections
+    unknown_words = []
+    for message in messages:
+        line = lines[message['line']-1]
+        if 'word' in message:
+            unknown_words.append(message['word']) # store unknown words for later
+        try:
+            line[message['start']:message['end']] = list(message['suggestions'][0])
+        except:
+            continue
+    
+    # rebuild text
+    corrected_lines = [''.join(x) for x in lines]
+    corrected_lines = [l + '.' if not l.endswith(('.', '!', '?', ',', ';', ':')) else l for l in corrected_lines]
+    corrected_lines = [l[0].upper() + l[1:] if l[0].upper() != l[0] else l for l in corrected_lines]
+    corrected_text = '\n'.join(corrected_lines)
+    
+    # perform additional checks
+    if any(x in corrected_text for x in other_corrections):
+        corrected_text = replace_values_in_string(corrected_text, other_corrections)
+    for word in unknown_words:
+        if word.startswith(('n', 'l', 'd')):
+            new_word = word[:1] + "'" + word[1:]
+            corrected_text = corrected_text.replace(word, new_word)
+    
+    # perform languagetool corrections on top of everything
+    tool = language_tool_python.LanguageTool('fr')
+    corrected_text = tool.correct(corrected_text)
+    corrected_text = unicodedata.normalize("NFKD", corrected_text)
+    
+    return corrected_text
+
+
+###########################################################
+# Helper functions
+###########################################################
 
 def grammalecte_file(
-    filename: Union[str, Path]
+    filename: Union[str, Path], as_dict=False
 ) -> Generator[GrammalecteMessage, None, None]:
     """Run grammalecte on a file given its path, generate messages."""
     stdout = "[]"
@@ -112,21 +194,21 @@ def grammalecte_file(
             _install_grammalecte()
             result = _run_grammalecte(filename)
             stdout = result.stdout
-    yield from _convert_to_messages(stdout)
+    yield from _convert_to_messages(stdout, as_dict=as_dict)
 
 
 def _convert_to_messages(
-    grammalecte_json: str,
+    grammalecte_json: str, as_dict=False
 ) -> Generator[GrammalecteMessage, None, None]:
     warnings = json.loads(grammalecte_json)
     for warning in warnings["data"]:
         lineno = int(warning["iParagraph"])
         messages = []
         for error in warning["lGrammarErrors"]:
-            messages.append(GrammalecteGrammarMessage.from_dict(lineno, error))
+            messages.append(GrammalecteGrammarMessage.from_dict(lineno, error, as_dict=as_dict))
         for error in warning["lSpellingErrors"]:
-            messages.append(GrammalecteSpellingMessage.from_dict(lineno, error))
-        for message in sorted(messages):
+            messages.append(GrammalecteSpellingMessage.from_dict(lineno, error, as_dict=as_dict))
+        for message in messages:
             yield message
 
 
@@ -170,3 +252,27 @@ def _install_grammalecte():
             str(tmpdirname / f"Grammalecte-fr-v{version}"),
         ]
     )
+
+
+###########################################################
+# Additional checking dictionary
+###########################################################
+
+other_corrections = {
+    "!!": "!",
+    "??": "?",
+    "?!": "?",
+    " d ": " d'",
+    " n ": " n'",
+    " l ": " l'",
+    "tps": "temps",
+    "ac": "avec",
+    "ok": "OK",
+    "okay": "OK",
+    "pr": "pour",
+}
+
+def replace_values_in_string(text, args_dict):
+    for key in args_dict.keys():
+        text = text.replace(key, str(args_dict[key]))
+    return text
