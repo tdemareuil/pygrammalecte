@@ -1,3 +1,28 @@
+___
+**Personal fork**
+
+In this fork I added a `correct()` function to the original package in order to perform corrections on a piece of text (in French). Under the hood, corrections include:
+* corrections suggested by Grammalecte
+* corrections suggested by languagetool (using the `language_tool_python` API)
+* additional corrections (including: point at the end of sentences, capitalized first letters, replace some abbreviations, remove double punctuation, etc.).
+
+Example:
+```python
+text = """paire de Skis quasi neufs en très bonne état, modèle de lannée dernière ac fixatins Salomon
+Très bonne affaire n hésitez pas !!!"""
+
+pygrammalecte.correct(text)
+```
+
+Output:
+```md
+Paire de Skis quasi neufs en très bon état, modèle de l'année dernière avec fixations Salomon.
+Très bonne affaire n'hésitez pas !!
+```
+___
+
+
+
 # pygrammalecte
 
 [![PyPI](https://img.shields.io/pypi/v/pygrammalecte.svg)](https://pypi.python.org/pypi/pygrammalecte)
