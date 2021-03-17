@@ -1,5 +1,5 @@
 ___
-**Personal fork**
+### Personal fork
 
 In this fork I added a `correct()` function to the original package in order to perform corrections on a piece of text (in French). Under the hood, corrections include:
 * corrections suggested by Grammalecte
